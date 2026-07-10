@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HD-EPIC-NF · 実厨房の3D配置を条件付きNFで</title>
+<style>
+ body{font:16px/1.75 -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#222}
+ h1{line-height:1.35;margin-bottom:.2rem} .sub{color:#666}
+ .kpis{display:flex;gap:1rem;flex-wrap:wrap;margin:1.4rem 0}
+ .kpi{background:#f5f3f0;border-radius:12px;padding:1rem 1.3rem;min-width:150px} .kpi b{display:block;font-size:1.6rem;color:#c2410c}
+ section{margin:2.3rem 0} img{width:100%;border:1px solid #e5e5e5;border-radius:10px}
+ .howto{color:#444;background:#faf8f5;border-left:3px solid #d97757;padding:.6rem .9rem;border-radius:0 8px 8px 0}
+ code{background:#f0eee9;padding:.1rem .3rem;border-radius:4px} .lead{background:#f7f5f2;border-radius:12px;padding:1rem 1.2rem}
+</style></head><body>
+<h1>HD-EPIC-NF — 実厨房の3D配置を条件付き Normalizing Flow で</h1>
+<p class="sub">実験B · <code>SURPRISE = −log p(3D位置 | 厨房)</code>。実厨房の多峰な配置でNFがGMMに勝つ。</p>
+<div class="kpis">
+ <div class="kpi"><b>1.030</b>Flow held-out NLL</div>
+ <div class="kpi"><b>1.253</b>GMM baseline NLL</div>
+ <div class="kpi"><b>0.9825</b>ランダム配置検出 AUROC</div>
+</div>
+<p class="lead"><b>何をしたか</b>：HD-EPICのオープン注釈（3D物体位置＋視線・動画不要）から、
+厨房ごとの<b>物の扱われる場所の密度</b>を条件付きNSFで学習。<b>実厨房の配置は多峰</b>（コンロ/シンク/調理台…）なので、
+<b>held-out NLLでFlowがGMMに明確に勝つ</b>＝実験Aの『ガウスに並ばれた』反省を実データで克服。
+視線から離れて扱われた物ほどサプライズが高い、という『よそ見＝忘れやすい』の弱い兆候も観測。</p>
+<section><h2>リプレイ：実厨房の配置密度の上で物を滑らせ、サプライズをライブ計測</h2><img src="results/figures/replay.gif" alt="replay.gif"><p class="howto">**左**＝厨房を上から見た床面。色は「そこに物を置いたときのサプライズ」（明黄＝予想どおり／暗紫＝違和感）、白点＝実際の物体操作位置。**右**＝サプライズ計。**見どころ**：実データでも普段の作業スポット（コンロ・シンク・調理台）が複数の明るい島＝**多峰**として現れ、そこを外れると急に驚く。Aの人工データでなく実厨房で成立。</p></section>
+<section><h2>厨房ごとのサプライズ地図（多峰性がFlowの勝因）</h2><img src="results/figures/surprise_maps.png" alt="surprise_maps.png"><p class="howto">6厨房それぞれの `p(位置 | 厨房)`。**見どころ**：明るい山が**複数**（コンロ/シンク/収納…）＝実厨房の配置は本質的に**多峰**。だから単一ガウスでは表せず、**Neural Spline Flowが効く**（＝実験Aで『ガウスに並ばれた』反省への直接的な回答）。</p></section>
+<section><h2>Flow vs GMM：密度の当てはまり と ランダム配置の検出</h2><img src="results/figures/metrics.png" alt="metrics.png"><p class="howto">**左**＝held-out NLL（低いほど良い）。**Flow < GMM** が本命の勝ち＝多峰配置をNFが良く当てている。**右**＝ランダムな場所に落とされた物の検出AUROC。両者とも高いが、差は密度(NLL)に最も出る。</p></section>
+<section><h2>学習曲線：Flow vs GMM（held-out NLL）</h2><img src="results/figures/training_curve.png" alt="training_curve.png"><p class="howto">エポックごとの検証NLL。Flowが一貫してGMMより低い＝表現力の差が安定して効いている。</p></section>
+<p class="sub"><code>python -m hde.report</code> で自動生成。NF forget/mistakeシリーズ(A–E)のB。</p>
+</body></html>

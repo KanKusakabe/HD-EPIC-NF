@@ -1,0 +1,8 @@
+# annotations are re-fetchable via `python -m hde.fetch`
+data/raw/
+data/processed/
+__pycache__/
+*.pyc
+.venv/
+.DS_Store
+# keep results/ (figures, metrics.json, model.pt) so the repo is self-showing
