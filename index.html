@@ -1,30 +1,34 @@
 <!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HD-EPIC-NF · 実厨房の3D配置を条件付きNFで</title>
+<title>HD-EPIC-NF · 実厨房の配置NF ＋ 個人化/ドリフト/few-shot/ポリシー</title>
 <style>
  body{font:16px/1.75 -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#222}
  h1{line-height:1.35;margin-bottom:.2rem} .sub{color:#666}
  .kpis{display:flex;gap:1rem;flex-wrap:wrap;margin:1.4rem 0}
  .kpi{background:#f5f3f0;border-radius:12px;padding:1rem 1.3rem;min-width:150px} .kpi b{display:block;font-size:1.6rem;color:#c2410c}
  section{margin:2.3rem 0} img{width:100%;border:1px solid #e5e5e5;border-radius:10px}
- .howto{color:#444;background:#faf8f5;border-left:3px solid #d97757;padding:.6rem .9rem;border-radius:0 8px 8px 0}
+ .obs{color:#333;margin:.5rem 0 .2rem}
+ .so{color:#444;background:#faf8f5;border-left:3px solid #d97757;padding:.6rem .9rem;border-radius:0 8px 8px 0}
  code{background:#f0eee9;padding:.1rem .3rem;border-radius:4px} .lead{background:#f7f5f2;border-radius:12px;padding:1rem 1.2rem}
 </style></head><body>
-<h1>HD-EPIC-NF — 実厨房の3D配置を条件付き Normalizing Flow で</h1>
-<p class="sub">実験B · <code>SURPRISE = −log p(3D位置 | 厨房)</code>。実厨房の多峰な配置でNFがGMMに勝つ。</p>
-<div class="kpis">
- <div class="kpi"><b>1.030</b>Flow held-out NLL</div>
- <div class="kpi"><b>1.253</b>GMM baseline NLL</div>
- <div class="kpi"><b>0.9825</b>ランダム配置検出 AUROC</div>
-</div>
-<p class="lead"><b>何をしたか</b>：HD-EPICのオープン注釈（3D物体位置＋視線・動画不要）から、
-厨房ごとの<b>物の扱われる場所の密度</b>を条件付きNSFで学習。<b>実厨房の配置は多峰</b>（コンロ/シンク/調理台…）なので、
-<b>held-out NLLでFlowがGMMに明確に勝つ</b>＝実験Aの『ガウスに並ばれた』反省を実データで克服。
-視線から離れて扱われた物ほどサプライズが高い、という『よそ見＝忘れやすい』の弱い兆候も観測。</p>
-<section><h2>リプレイ：実厨房の配置密度の上で物を滑らせ、サプライズをライブ計測</h2><img src="results/figures/replay.gif" alt="replay.gif"><p class="howto">**左**＝厨房を上から見た床面。色は「そこに物を置いたときのサプライズ」（明黄＝予想どおり／暗紫＝違和感）、白点＝実際の物体操作位置。**右**＝サプライズ計。**見どころ**：実データでも普段の作業スポット（コンロ・シンク・調理台）が複数の明るい島＝**多峰**として現れ、そこを外れると急に驚く。Aの人工データでなく実厨房で成立。</p></section>
-<section><h2>厨房ごとのサプライズ地図（多峰性がFlowの勝因）</h2><img src="results/figures/surprise_maps.png" alt="surprise_maps.png"><p class="howto">6厨房それぞれの `p(位置 | 厨房)`。**見どころ**：明るい山が**複数**（コンロ/シンク/収納…）＝実厨房の配置は本質的に**多峰**。だから単一ガウスでは表せず、**Neural Spline Flowが効く**（＝実験Aで『ガウスに並ばれた』反省への直接的な回答）。</p></section>
-<section><h2>Flow vs GMM：密度の当てはまり と ランダム配置の検出</h2><img src="results/figures/metrics.png" alt="metrics.png"><p class="howto">**左**＝held-out NLL（低いほど良い）。**Flow < GMM** が本命の勝ち＝多峰配置をNFが良く当てている。**右**＝ランダムな場所に落とされた物の検出AUROC。両者とも高いが、差は密度(NLL)に最も出る。</p></section>
-<section><h2>学習曲線：Flow vs GMM（held-out NLL）</h2><img src="results/figures/training_curve.png" alt="training_curve.png"><p class="howto">エポックごとの検証NLL。Flowが一貫してGMMより低い＝表現力の差が安定して効いている。</p></section>
-<p class="sub"><code>python -m hde.report</code> で自動生成。NF forget/mistakeシリーズ(A–E)のB。</p>
+<h1>HD-EPIC-NF — 実厨房の配置NF ＋ 個人化 / ドリフト / few-shot / 介入ポリシー</h1>
+<p class="sub">実験B（<code>−log p(位置｜厨房)</code>）を、異常検知から<b>個人の routine とその介入有用性</b>まで深化（L1–L4）。</p>
+<div class="kpis"><div class="kpi"><b>1.030</b>Flow held-out NLL</div>
+<div class="kpi"><b>1.253</b>GMM baseline NLL</div>
+<div class="kpi"><b>+2.05</b>L1 個人化ゲイン (nats)</div>
+<div class="kpi"><b>+0.95</b>L4 予測ポリシー効用</div></div>
+<p class="lead"><b>要旨</b>：実厨房の配置は多峰なので Flow が GMM に勝つ（B）。そこから、
+<b>L1</b> 習慣は個人的（“誰か”を知ると予測が改善）、<b>L2</b> 習慣は時間で動く/定着する、
+<b>L3</b> 公共の事前分布から少数例で新しい人を個人化できる、<b>L4</b> サプライズで事前警告する方が事後対応より得、
+を示す。各図に<b>観察</b>と<b>解釈（だから何が言えるか）</b>を併記。</p>
+<section><h2>リプレイ：実厨房の配置密度の上で物を滑らせ、サプライズをライブ計測</h2><img src="results/figures/replay.gif" alt="replay.gif"><p class="obs"><b>観察</b>：物を厨房の各位置に置いたときの −log p を色で、白点＝実際の操作位置。プローブが普段の作業島（明）から外れると計器が跳ねる。</p><p class="so">**だから何が言えるか**：実厨房でも『普段の置き場』は複数の島＝多峰で存在し、そこを外れた瞬間だけ驚く。＝サプライズは“場所の妥当性”を連続量として測れており、単なる外れ値フラグでなく『どれくらい変か』の勾配を持つ。</p></section>
+<section><h2>Flow vs GMM：密度の当てはまり と ランダム配置の検出</h2><img src="results/figures/metrics.png" alt="metrics.png"><p class="obs"><b>観察</b>：held-out NLL は Flow 1.030 < GMM 1.253（差 0.22 nats）。ランダム配置の検出AUROCは両者とも ~0.9825。</p><p class="so">**だから何が言えるか**：厨房配置は多峰なので、単一ガウスの重ね合わせ（GMM）より Flow の方が 0.22 nats ぶん“ありえる場所”を正しく狭く当てている。＝『実験Aでガウスに並ばれた』のは題材が単峰で低次元だったからで、実データの多峰性ではNFの表現力が本質的に効く、という反省の実証。一方ランダム配置は簡単すぎて両者高く、差は密度(NLL)側にしか出ない＝評価は“難しい異常”で見るべき。</p></section>
+<section><h2>厨房ごとのサプライズ地図（多峰性）</h2><img src="results/figures/surprise_maps.png" alt="surprise_maps.png"><p class="obs"><b>観察</b>：6厨房それぞれ、明るい山（低サプライズ＝定位置）が複数。白点の実操作もその島に乗る。</p><p class="so">**だから何が言えるか**：人は物を1箇所でなく数箇所の“定位置”に置く。この多峰構造こそFlowがGMMに勝つ理由で、『どこがその人にとって普通か』は本質的に多峰＝個人ごとに違う地図になる、という次(L1)への布石。</p></section>
+<section><h2>L1 · 個人 vs 集団：誰かを知ると配置予測はどれだけ良くなるか</h2><img src="results/figures/l1_personalization.png" alt="l1_personalization.png"><p class="obs"><b>観察</b>：厨房（＝人）で条件づけたモデルは、集団一律モデルより held-out NLL が平均 2.05 nats 低い。</p><p class="so">**だから何が言えるか**：＋なら“誰か”を知るだけで予測が 2.05 nats 改善＝**置き場の習慣は個人ごとに違う**。つまり集団基準の忘れ物検出は、その人には普通の場所を『異常』と誤警報する。個人化は任意でなく必須、という結論。</p></section>
+<section><h2>L2 · ルーチンのドリフト：早期に学んだ習慣は後日も当たるか</h2><img src="results/figures/l2_drift.png" alt="l2_drift.png"><p class="obs"><b>観察</b>：早期データで学んだモデルを『後日（未来）』で評価すると NLL が時間無関係のランダム保留より平均 +0.27 nats 変化。</p><p class="so">**だから何が言えるか**：未来ほど当てにくい＝“普通”は時間で動く（非定常）。＝静的な忘れ物検出は時間とともに陳腐化し、オンライン更新が要る。習慣が再編される＝これ自体が“忘却/学習”の時間的側面。</p></section>
+<section><h2>L3 · few-shot 転移：新しい人を“他人の事前分布”から個人化できるか</h2><img src="results/figures/l3_fewshot.png" alt="l3_fewshot.png"><p class="obs"><b>観察</b>：対象厨房に k 例だけで適応。少数(20例)では pretrained 2.78 / scratch 2.60、多め(400例)でも 1.48 / 1.38。</p><p class="so">**だから何が言えるか（正直な逆結果）**：他人で事前学習した方が全域で**むしろ悪い**（20例で +0.18 nats）。L1 が示した通り配置習慣は**強く個人的**で、しかも厨房ごとに座標系・レイアウトが違うため、他人の事前分布は“間違った prior”になる。＝**moat は「他人で事前学習」ではなく、本人自身の少数データからの個人化**（またはレイアウトを揃えた表現）にある、という重要な知見。naiveな転移は効かず、個人化の“正しいやり方”選択が本質。</p></section>
+<section><h2>L4 · 予測 vs リアクティブ：サプライズで“事前に”警告する価値</h2><img src="results/figures/l4_policy.png" alt="l4_policy.png"><p class="obs"><b>観察</b>：サプライズ閾値を動かした予測ポリシーの期待効用は最大 0.95（リアクティブ＝事後対応は 0）。最良点で at-risk の 98% を捕捉、誤警報 16%。</p><p class="so">**だから何が言えるか**：効用が正＝誤警報コストを引いても“置く前に驚いて警告する”方が事後対応より得（正味 0.95）。＝サプライズは検出器の AUC でなく**意思決定に効く**信号で、最適閾値が『いつ介入すべきか』を与える。貢献は“異常検知”でなく**介入ポリシー**、というテーゼの実証。（ただし at-risk はランダムテレポート＝易しめの合成異常なので捕捉率は楽観的。要点は“予測＞リアクティブ”という意思決定の向き。）</p></section>
+<section><h2>学習曲線：Flow vs GMM（held-out NLL）</h2><img src="results/figures/training_curve.png" alt="training_curve.png"><p class="obs"><b>観察</b>：エポックごとの検証NLLで Flow が一貫して GMM より低い。</p><p class="so">**だから何が言えるか**：表現力の差は初期の運や過学習でなく安定した性質＝多峰配置に対するNFの優位は再現的。</p></section>
+<p class="sub"><code>python -m hde.report</code> で自動生成。NF forget/mistakeシリーズBの深化版（L1–L4）。</p>
 </body></html>

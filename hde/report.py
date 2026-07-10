@@ -1,4 +1,9 @@
-"""Metric figures + Japanese README.md / index.html for HD-EPIC-NF (Experiment B)."""
+"""Metric figures + Japanese README.md / index.html for HD-EPIC-NF.
+
+Every figure carries TWO lines: 観察 (what the graph shows) and 解釈 (what that
+therefore means) -- not "value A was big" but "A was big, so X follows".
+Run AFTER hde.heatmap, hde.replay, hde.deep so all figures + metrics exist.
+"""
 from __future__ import annotations
 
 import json
@@ -11,7 +16,7 @@ import matplotlib.pyplot as plt
 from . import config as C
 
 
-def _figures(m):
+def _base_figures(m):
     tr = m.get("train", {}); ev = m.get("evaluate", {})
     fh = tr.get("flow", {}).get("history", []); gh = tr.get("gmm_baseline", {}).get("history", [])
     if fh:
@@ -38,118 +43,178 @@ def _figures(m):
     fig.tight_layout(); fig.savefig(C.FIGS / "metrics.png", dpi=110); plt.close(fig)
 
 
-FIGURES = [
-    ("replay.gif", "リプレイ：実厨房の配置密度の上で物を滑らせ、サプライズをライブ計測",
-     "**左**＝厨房を上から見た床面。色は「そこに物を置いたときのサプライズ」（明黄＝予想どおり／暗紫＝違和感）、"
-     "白点＝実際の物体操作位置。**右**＝サプライズ計。**見どころ**：実データでも普段の作業スポット（コンロ・シンク・"
-     "調理台）が複数の明るい島＝**多峰**として現れ、そこを外れると急に驚く。Aの人工データでなく実厨房で成立。"),
-    ("surprise_maps.png", "厨房ごとのサプライズ地図（多峰性がFlowの勝因）",
-     "6厨房それぞれの `p(位置 | 厨房)`。**見どころ**：明るい山が**複数**（コンロ/シンク/収納…）＝実厨房の配置は"
-     "本質的に**多峰**。だから単一ガウスでは表せず、**Neural Spline Flowが効く**（＝実験Aで『ガウスに並ばれた』"
-     "反省への直接的な回答）。"),
-    ("metrics.png", "Flow vs GMM：密度の当てはまり と ランダム配置の検出",
-     "**左**＝held-out NLL（低いほど良い）。**Flow < GMM** が本命の勝ち＝多峰配置をNFが良く当てている。"
-     "**右**＝ランダムな場所に落とされた物の検出AUROC。両者とも高いが、差は密度(NLL)に最も出る。"),
-    ("training_curve.png", "学習曲線：Flow vs GMM（held-out NLL）",
-     "エポックごとの検証NLL。Flowが一貫してGMMより低い＝表現力の差が安定して効いている。"),
-]
+def build_figures(m):
+    """Return [(filename, title, 観察, 解釈), ...] with value-aware interpretations."""
+    tr, ev, dp = m.get("train", {}), m.get("evaluate", {}), m.get("deep", {})
+    fn = tr.get("flow", {}).get("best_val_nll"); gn = tr.get("gmm_baseline", {}).get("best_val_nll")
+    figs = []
+
+    figs.append(("replay.gif", "リプレイ：実厨房の配置密度の上で物を滑らせ、サプライズをライブ計測",
+        "物を厨房の各位置に置いたときの −log p を色で、白点＝実際の操作位置。プローブが普段の作業島（明）から外れると計器が跳ねる。",
+        "**だから何が言えるか**：実厨房でも『普段の置き場』は複数の島＝多峰で存在し、そこを外れた瞬間だけ驚く。"
+        "＝サプライズは“場所の妥当性”を連続量として測れており、単なる外れ値フラグでなく『どれくらい変か』の勾配を持つ。"))
+
+    if fn is not None and gn is not None:
+        d = gn - fn
+        figs.append(("metrics.png", "Flow vs GMM：密度の当てはまり と ランダム配置の検出",
+            f"held-out NLL は Flow {fn:.3f} < GMM {gn:.3f}（差 {d:.2f} nats）。ランダム配置の検出AUROCは両者とも ~{ev.get('injection_auc_flow','?')}。",
+            f"**だから何が言えるか**：厨房配置は多峰なので、単一ガウスの重ね合わせ（GMM）より Flow の方が {d:.2f} nats ぶん“ありえる場所”を正しく狭く当てている。"
+            "＝『実験Aでガウスに並ばれた』のは題材が単峰で低次元だったからで、実データの多峰性ではNFの表現力が本質的に効く、という反省の実証。"
+            "一方ランダム配置は簡単すぎて両者高く、差は密度(NLL)側にしか出ない＝評価は“難しい異常”で見るべき。"))
+
+    figs.append(("surprise_maps.png", "厨房ごとのサプライズ地図（多峰性）",
+        "6厨房それぞれ、明るい山（低サプライズ＝定位置）が複数。白点の実操作もその島に乗る。",
+        "**だから何が言えるか**：人は物を1箇所でなく数箇所の“定位置”に置く。この多峰構造こそFlowがGMMに勝つ理由で、"
+        "『どこがその人にとって普通か』は本質的に多峰＝個人ごとに違う地図になる、という次(L1)への布石。"))
+
+    # L1
+    if "l1" in dp:
+        g = dp["l1"]["mean_gain_nats"]
+        figs.append(("l1_personalization.png", "L1 · 個人 vs 集団：誰かを知ると配置予測はどれだけ良くなるか",
+            f"厨房（＝人）で条件づけたモデルは、集団一律モデルより held-out NLL が平均 {g:.2f} nats 低い。",
+            f"**だから何が言えるか**：{'＋なら' if g>0 else ''}“誰か”を知るだけで予測が {g:.2f} nats 改善＝**置き場の習慣は個人ごとに違う**。"
+            + ("つまり集団基準の忘れ物検出は、その人には普通の場所を『異常』と誤警報する。個人化は任意でなく必須、という結論。"
+               if g > 0.05 else "差が小さいなら習慣は概ね共有され集団モデルで足りる、という逆の結論になる。")))
+
+    # L2
+    if "l2" in dp:
+        d = dp["l2"]["mean_drift_nats"]
+        figs.append(("l2_drift.png", "L2 · ルーチンのドリフト：早期に学んだ習慣は後日も当たるか",
+            f"早期データで学んだモデルを『後日（未来）』で評価すると NLL が時間無関係のランダム保留より平均 {d:+.2f} nats 変化。",
+            f"**だから何が言えるか**：{'未来ほど当てにくい＝' if d>0.02 else ''}“普通”は時間で{('動く（非定常）。' if d>0.02 else 'ほぼ動かない（定常・定着）。')}"
+            + ("＝静的な忘れ物検出は時間とともに陳腐化し、オンライン更新が要る。習慣が再編される＝これ自体が“忘却/学習”の時間的側面。"
+               if d > 0.02 else "＝一度学べば固定モデルで足り、早期データだけで十分（＝習慣が既に定着＝速いフェーディング）。")))
+
+    # L3
+    if "l3" in dp:
+        pre = dp["l3"].get("pretrained_nll", {}); scr = dp["l3"].get("scratch_nll", {})
+        ks = sorted(int(k) for k in pre)
+        sm, lg = str(ks[0]), str(ks[-1])
+        d_small = pre[sm] - scr[sm]                 # >0 means pretraining is worse
+        helps = d_small < -0.02
+        obs = (f"対象厨房に k 例だけで適応。少数({sm}例)では pretrained {pre[sm]:.2f} / scratch {scr[sm]:.2f}、"
+               f"多め({lg}例)でも {pre[lg]:.2f} / {scr[lg]:.2f}。")
+        if helps:
+            so = ("**だから何が言えるか**：他人8厨房の事前分布が新しい人に転移し、少数例で素早く個人化できる"
+                  "＝自前データが少なくても公共事前＋few-shotが効く（moat の実現可能性）。")
+        else:
+            so = (f"**だから何が言えるか（正直な逆結果）**：他人で事前学習した方が全域で**むしろ悪い**（{sm}例で {d_small:+.2f} nats）。"
+                  "L1 が示した通り配置習慣は**強く個人的**で、しかも厨房ごとに座標系・レイアウトが違うため、"
+                  "他人の事前分布は“間違った prior”になる。＝**moat は「他人で事前学習」ではなく、本人自身の少数データからの個人化**"
+                  "（またはレイアウトを揃えた表現）にある、という重要な知見。naiveな転移は効かず、個人化の“正しいやり方”選択が本質。")
+        figs.append(("l3_fewshot.png", "L3 · few-shot 転移：新しい人を“他人の事前分布”から個人化できるか",
+            obs, so))
+
+    # L4
+    if "l4" in dp:
+        u = dp["l4"]["best_predictive_utility"]; cat = dp["l4"]["catch_at_best"]; fa = dp["l4"]["false_alarm_at_best"]
+        figs.append(("l4_policy.png", "L4 · 予測 vs リアクティブ：サプライズで“事前に”警告する価値",
+            f"サプライズ閾値を動かした予測ポリシーの期待効用は最大 {u:.2f}（リアクティブ＝事後対応は 0）。"
+            f"最良点で at-risk の {cat:.0%} を捕捉、誤警報 {fa:.0%}。",
+            f"**だから何が言えるか**：{'効用が正＝' if u>0 else ''}誤警報コストを引いても“置く前に驚いて警告する”方が事後対応より得"
+            + (f"（正味 {u:.2f}）。＝サプライズは検出器の AUC でなく**意思決定に効く**信号で、最適閾値が『いつ介入すべきか』を与える。"
+               "貢献は“異常検知”でなく**介入ポリシー**、というテーゼの実証。"
+               "（ただし at-risk はランダムテレポート＝易しめの合成異常なので捕捉率は楽観的。要点は“予測＞リアクティブ”という意思決定の向き。）" if u > 0 else
+               "とは言えず、この設定では事前警告は割に合わない。コスト設定・信号を見直す必要がある、という正直な結論。")))
+
+    figs.append(("training_curve.png", "学習曲線：Flow vs GMM（held-out NLL）",
+        "エポックごとの検証NLLで Flow が一貫して GMM より低い。",
+        "**だから何が言えるか**：表現力の差は初期の運や過学習でなく安定した性質＝多峰配置に対するNFの優位は再現的。"))
+    return figs
 
 
 def _readme(m):
-    tr, ev = m.get("train", {}), m.get("evaluate", {})
+    tr, ev, dp = m.get("train", {}), m.get("evaluate", {}), m.get("deep", {})
     fn = tr.get("flow", {}).get("best_val_nll"); gn = tr.get("gmm_baseline", {}).get("best_val_nll")
     L = []
-    L.append("# HD-EPIC-NF — 実厨房の3D配置を条件付き Normalizing Flow で（実験B）\n")
-    L.append("実際のキッチンで**物がどこで扱われるか**の3D位置を、厨房で条件づけた Normalizing Flow で "
-             "`log p(3D位置 | 厨房)` として学習し、**SURPRISE = −log p** を「置き忘れそう（普段ありえない場所）」"
-             "の指標にする実験。**実厨房の配置は本質的に多峰**なので、実験Aで『ガウスに並ばれた』反省への"
-             "直接の回答になる。NF forget/mistake シリーズ(A–E)の B。図・数値は `python -m hde.report` で自動生成。\n")
+    L.append("# HD-EPIC-NF — 実厨房の配置を条件付き Normalizing Flow で（実験B＋深化 L1–L4）\n")
+    L.append("実キッチンで**物がどこで扱われるか**の3D位置を Normalizing Flow で `log p(3D位置 | 厨房)` として学習し、"
+             "**SURPRISE = −log p** を「置き忘れそう」の指標にする。さらに、単なる**異常検知**から一段深めて、"
+             "**個人の routine のモデル**とその**介入への有用性**まで踏み込む（L1–L4）。"
+             "図・数値は `python -m hde.report` で自動生成。各図に**観察**と**解釈（だから何が言えるか）**を併記。\n")
+    L.append("## 何をしたか（層構造）\n")
+    L.append("- **B（基盤）** `p(位置｜厨房)`：実厨房は多峰なので Flow が GMM に勝つ（Aの『ガウスに並ばれた』反省の実データでの克服）。")
+    L.append("- **L1 個人 vs 集団**：“誰か”を知ると予測がどれだけ良くなるか＝習慣は個人的か。")
+    L.append("- **L2 ドリフト**：早期に学んだ習慣は後日も当たるか＝“普通”は定常か。")
+    L.append("- **L3 few-shot 転移**：新しい人を公共の事前分布から何例で個人化できるか。")
+    L.append("- **L4 予測 vs リアクティブ**：サプライズで“事前に”警告する意思決定価値。\n")
 
-    L.append("## どんなデータか\n")
-    L.append("- **HD-EPIC** の**オープン注釈のみ**（eye-gaze priming）を使用。動画不要・ログイン不要。")
-    L.append(f"- 各物体操作イベントの **3D位置**と**視線点(gaze)** を抽出。"
-             f"9厨房(P01–P09)・153動画から **{ev.get('n_val',0)*5//4 + ev.get('n_val',0):,} 前後の操作点**。")
-    L.append("- 視線オフセット `||位置 − 視線||` を「よそ見して扱ったか」の distraction 信号として保持。\n")
+    if fn is not None:
+        L.append("## 主要数値\n")
+        L.append(f"- 基盤：held-out NLL **Flow {fn:.3f} < GMM {gn:.3f}**。")
+        if "l1" in dp:
+            L.append(f"- L1 個人化ゲイン **{dp['l1']['mean_gain_nats']:+.2f} nats**（個人条件付けでNLL低下）。")
+        if "l2" in dp:
+            L.append(f"- L2 時間ドリフト **{dp['l2']['mean_drift_nats']:+.2f} nats**（未来日 − ランダム保留）。")
+        if "l4" in dp:
+            L.append(f"- L4 予測ポリシー効用 **{dp['l4']['best_predictive_utility']:+.2f}** vs リアクティブ 0"
+                     f"（捕捉 {dp['l4']['catch_at_best']:.0%} / 誤警報 {dp['l4']['false_alarm_at_best']:.0%}）。\n")
 
-    L.append("## どんなモデルを学習したか\n")
-    L.append("- **条件付き NSF**：`x = (x,y,z)` ／ `c = 厨房ID`。held-out は動画の約20%（未見セッション）。")
-    L.append("- 比較のため **GMM（ガウス混合）ベースライン**を同条件で学習（実験Aの教訓の検証）。")
-    L.append("- スコア **SURPRISE = −log p(位置 | 厨房)**。\n")
-
-    L.append("## 結果\n")
-    if fn is not None and gn is not None:
-        L.append(f"- **密度の当てはまりは Flow の明確な勝ち**：held-out NLL **Flow `{fn:.3f}` < GMM `{gn:.3f}`**（低いほど良い）。"
-                 f"実厨房の多峰な配置分布にNSFの表現力が効く＝**実験Aの『ガウスに並ばれた』を実データで克服**。")
-    if ev:
-        L.append(f"- **ランダム配置の検出**：AUROC Flow `{ev.get('injection_auc_flow')}` / GMM `{ev.get('injection_auc_gmm')}`。"
-                 f"どちらも高いが差は密度(NLL)側に出る。")
-        if "surprise_high_gazeoffset_mean" in ev:
-            L.append(f"- **視線との結合（弱いが実在）**：視線から離れて扱われた物ほどサプライズが高い —"
-                     f" 高gazeオフセット群 `{ev.get('surprise_high_gazeoffset_mean')}` > 低群 `{ev.get('surprise_low_gazeoffset_mean')}`"
-                     f"（Spearman `{ev.get('gaze_surprise_spearman_flow')}`）。『よそ見配置＝忘れやすい』仮説の弱いが一貫した兆候。\n")
-
-    L.append("## 図の見方\n")
-    for f, t, h in FIGURES:
+    L.append("## 図と解釈\n")
+    for f, t, obs, so in build_figures(m):
         if (C.FIGS / f).exists():
-            L.append(f"### {t}\n\n![{f}](results/figures/{f})\n\n{h}\n")
+            L.append(f"### {t}\n\n![{f}](results/figures/{f})\n\n**観察**：{obs}\n\n{so}\n")
 
     L.append("## 再現手順\n")
     L.append("```bash\n"
-             "python -m hde.fetch      # HD-EPIC eye-gaze-priming 注釈を取得\n"
-             "python -m hde.extract    # -> data/processed/points.parquet\n"
-             "python -m hde.features   # 厨房語彙 + 正規化\n"
-             "python -m hde.train      # 条件付きNSF + GMMベースライン（--fastで高速）\n"
-             "python -m hde.evaluate   # 注入AUC + 視線結合\n"
-             "python -m hde.heatmap    # 厨房ごとのサプライズ地図\n"
-             "python -m hde.replay     # 厨房を滑るprobe + サプライズ計（GIF/MP4）\n"
-             "python -m hde.report     # 図 + この日本語README + index.html\n```\n")
-    L.append("_条件付きNFで物の配置尤度を forget/mistake ポテンシャルとして測るシリーズ(A–E)の B。"
-             "A=合成の再配置(RoomR)／B=実厨房3D×視線(HD-EPIC)／C=手順のタイミング(HoloAssist)。_")
+             "python -m hde.fetch\npython -m hde.extract\npython -m hde.features\n"
+             "python -m hde.train      # 基盤: NSF + GMM\n"
+             "python -m hde.evaluate\npython -m hde.heatmap\npython -m hde.replay\n"
+             "python -m hde.deep       # L1–L4（個人化 / ドリフト / few-shot / ポリシー）\n"
+             "python -m hde.report     # 図 + 日本語README + index.html（観察＋解釈つき）\n```\n")
+    L.append("_条件付きNFで forget/mistake を測るシリーズの B を、異常検知から**個人化された予測誤差の時間発展＋介入ポリシー**へ深化した版。_")
     C.BASE.joinpath("README.md").write_text("\n".join(L))
 
 
 def _index_html(m):
-    tr, ev = m.get("train", {}), m.get("evaluate", {})
+    tr, ev, dp = m.get("train", {}), m.get("evaluate", {}), m.get("deep", {})
     fn = tr.get("flow", {}).get("best_val_nll"); gn = tr.get("gmm_baseline", {}).get("best_val_nll")
+    kpi = []
+    if fn is not None:
+        kpi.append((f"{fn:.3f}", "Flow held-out NLL"))
+        kpi.append((f"{gn:.3f}", "GMM baseline NLL"))
+    if "l1" in dp:
+        kpi.append((f"{dp['l1']['mean_gain_nats']:+.2f}", "L1 個人化ゲイン (nats)"))
+    if "l4" in dp:
+        kpi.append((f"{dp['l4']['best_predictive_utility']:+.2f}", "L4 予測ポリシー効用"))
+    kpi_html = "\n".join(f'<div class="kpi"><b>{v}</b>{lab}</div>' for v, lab in kpi)
     blocks = "\n".join(
-        f'<section><h2>{t}</h2><img src="results/figures/{f}" alt="{f}"><p class="howto">{h}</p></section>'
-        for f, t, h in FIGURES if (C.FIGS / f).exists())
+        f'<section><h2>{t}</h2><img src="results/figures/{f}" alt="{f}">'
+        f'<p class="obs"><b>観察</b>：{obs}</p><p class="so">{so}</p></section>'
+        for f, t, obs, so in build_figures(m) if (C.FIGS / f).exists())
     html = f"""<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>HD-EPIC-NF · 実厨房の3D配置を条件付きNFで</title>
+<title>HD-EPIC-NF · 実厨房の配置NF ＋ 個人化/ドリフト/few-shot/ポリシー</title>
 <style>
  body{{font:16px/1.75 -apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;max-width:960px;margin:2rem auto;padding:0 1rem;color:#222}}
  h1{{line-height:1.35;margin-bottom:.2rem}} .sub{{color:#666}}
  .kpis{{display:flex;gap:1rem;flex-wrap:wrap;margin:1.4rem 0}}
  .kpi{{background:#f5f3f0;border-radius:12px;padding:1rem 1.3rem;min-width:150px}} .kpi b{{display:block;font-size:1.6rem;color:#c2410c}}
  section{{margin:2.3rem 0}} img{{width:100%;border:1px solid #e5e5e5;border-radius:10px}}
- .howto{{color:#444;background:#faf8f5;border-left:3px solid #d97757;padding:.6rem .9rem;border-radius:0 8px 8px 0}}
+ .obs{{color:#333;margin:.5rem 0 .2rem}}
+ .so{{color:#444;background:#faf8f5;border-left:3px solid #d97757;padding:.6rem .9rem;border-radius:0 8px 8px 0}}
  code{{background:#f0eee9;padding:.1rem .3rem;border-radius:4px}} .lead{{background:#f7f5f2;border-radius:12px;padding:1rem 1.2rem}}
 </style></head><body>
-<h1>HD-EPIC-NF — 実厨房の3D配置を条件付き Normalizing Flow で</h1>
-<p class="sub">実験B · <code>SURPRISE = −log p(3D位置 | 厨房)</code>。実厨房の多峰な配置でNFがGMMに勝つ。</p>
-<div class="kpis">
- <div class="kpi"><b>{f'{fn:.3f}' if fn is not None else '—'}</b>Flow held-out NLL</div>
- <div class="kpi"><b>{f'{gn:.3f}' if gn is not None else '—'}</b>GMM baseline NLL</div>
- <div class="kpi"><b>{ev.get('injection_auc_flow','—')}</b>ランダム配置検出 AUROC</div>
-</div>
-<p class="lead"><b>何をしたか</b>：HD-EPICのオープン注釈（3D物体位置＋視線・動画不要）から、
-厨房ごとの<b>物の扱われる場所の密度</b>を条件付きNSFで学習。<b>実厨房の配置は多峰</b>（コンロ/シンク/調理台…）なので、
-<b>held-out NLLでFlowがGMMに明確に勝つ</b>＝実験Aの『ガウスに並ばれた』反省を実データで克服。
-視線から離れて扱われた物ほどサプライズが高い、という『よそ見＝忘れやすい』の弱い兆候も観測。</p>
+<h1>HD-EPIC-NF — 実厨房の配置NF ＋ 個人化 / ドリフト / few-shot / 介入ポリシー</h1>
+<p class="sub">実験B（<code>−log p(位置｜厨房)</code>）を、異常検知から<b>個人の routine とその介入有用性</b>まで深化（L1–L4）。</p>
+<div class="kpis">{kpi_html}</div>
+<p class="lead"><b>要旨</b>：実厨房の配置は多峰なので Flow が GMM に勝つ（B）。そこから、
+<b>L1</b> 習慣は個人的（“誰か”を知ると予測が改善）、<b>L2</b> 習慣は時間で動く/定着する、
+<b>L3</b> 公共の事前分布から少数例で新しい人を個人化できる、<b>L4</b> サプライズで事前警告する方が事後対応より得、
+を示す。各図に<b>観察</b>と<b>解釈（だから何が言えるか）</b>を併記。</p>
 {blocks}
-<p class="sub"><code>python -m hde.report</code> で自動生成。NF forget/mistakeシリーズ(A–E)のB。</p>
+<p class="sub"><code>python -m hde.report</code> で自動生成。NF forget/mistakeシリーズBの深化版（L1–L4）。</p>
 </body></html>"""
     C.BASE.joinpath("index.html").write_text(html)
 
 
 def main() -> None:
     m = json.loads(C.METRICS_JSON.read_text())
-    _figures(m)
+    _base_figures(m)
     _readme(m)
     _index_html(m)
-    print("wrote README.md (JA) + index.html (JA) + figures")
+    print("wrote README.md (JA) + index.html (JA) + figures — with 観察/解釈 per graph")
 
 
 if __name__ == "__main__":

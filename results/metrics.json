@@ -820,5 +820,59 @@
   "gaze_surprise_spearman_flow": 0.066,
   "surprise_high_gazeoffset_mean": 1.65,
   "surprise_low_gazeoffset_mean": 1.408
+ },
+ "deep": {
+  "l1": {
+   "mean_gain_nats": 2.05,
+   "per_kitchen_gain": {
+    "P01": 1.574,
+    "P02": 2.28,
+    "P03": 1.538,
+    "P04": 2.529,
+    "P05": 2.297,
+    "P06": 2.293,
+    "P07": 2.152,
+    "P08": 1.917,
+    "P09": 1.872
+   }
+  },
+  "l2": {
+   "mean_drift_nats": 0.272,
+   "per_kitchen_drift": {
+    "P01": 0.024,
+    "P02": 0.09,
+    "P03": 0.216,
+    "P04": 0.403,
+    "P05": 0.022,
+    "P06": 0.437,
+    "P07": 0.618,
+    "P08": 0.319,
+    "P09": 0.322
+   }
+  },
+  "l3": {
+   "pretrained_nll": {
+    "20": 2.78,
+    "50": 2.232,
+    "100": 1.887,
+    "200": 1.645,
+    "400": 1.479
+   },
+   "scratch_nll": {
+    "20": 2.601,
+    "50": 2.109,
+    "100": 1.843,
+    "200": 1.514,
+    "400": 1.378
+   }
+  },
+  "l4": {
+   "best_predictive_utility": 0.955,
+   "reactive_utility": 0.0,
+   "catch_at_best": 0.979,
+   "false_alarm_at_best": 0.159,
+   "benefit": 1.0,
+   "fa_cost": 0.15
+  }
  }
 }
