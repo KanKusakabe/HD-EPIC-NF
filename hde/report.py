@@ -40,6 +40,26 @@ NUM_GUIDE = [
     ("nats（ゲイン）", "条件（誰か・時間）を足したときのNLL改善量。大きいほどその条件が効く。"),
 ]
 
+RAW_INTRO = (
+    "<b>生データ</b>＝HD-EPIC の<b>公開注釈JSON</b>（動画は不使用・ログイン不要）。使ったのは主に "
+    "<code>eye-gaze-priming / object-movements</code>：物が扱われるたびに "
+    "<code>{ 3D位置(x,y,z), 視線のズレ(gaze_offset), カメラからの距離(dist_to_cam), "
+    "見てから触るまでの時間(prime_gap), 厨房ID(P01…), 移動の開始/終了(phase) }</code>。<br>"
+    "<b>1レコードの実例</b>：<code>P01</code> の台所で、ある物の操作開始点が <code>(-0.11, -3.13, -0.03)</code>、"
+    "その時 gaze は物から <code>0.07</code> ずれ、カメラから <code>2.3m</code>、見てから触るまで <code>3.5秒</code>。<br>"
+    "→ 学習の主対象は <b>物の3D位置 × 厨房(≒人)</b>（視線ズレは『見ずに置いたか』の解釈に使用）。計 35,911 レコード。")
+
+FUTURE = (
+    "<p>本実装は「<b>3D位置＋厨房ID</b>」が主。データの列がこう増えると、こんな学習に広がる：</p><ul>"
+    "<li><b>＋視線・手ポーズの<u>時系列</u></b>（本データに gaze はあり、系列条件化が次段）→ "
+    "『よそ見して置く→後で探す』の因果に踏み込める。</li>"
+    "<li><b>＋その物に次に触れた時刻（放置時間）</b> → 忘却の<b>実ラベル</b>ができ、"
+    "『低尤度な置き方＝実際に忘れやすい』を直接検証できる（本課題の核心・未達）。</li>"
+    "<li><b>＋物体カテゴリの明示的条件化</b> → 物ごとの置き場マップ（鍋はコンロ・包丁はまな板脇…）。</li>"
+    "<li><b>＋複数日・時刻</b> → 習慣のドリフト（L2で部分実証済み）。</li>"
+    "<li><b>＋レイアウトを揃えた座標系</b> → 他人の事前分布が効き few-shot 転移が可能に"
+    "（L3で『他人で事前学習が逆効果』だった処方箋）。</li></ul>")
+
 
 def _base_figures(m):
     tr = m.get("train", {}); ev = m.get("evaluate", {})
@@ -157,6 +177,8 @@ def _readme(m):
              "**SURPRISE = −log p** を「置き忘れそう」の指標にする。さらに、単なる**異常検知**から一段深めて、"
              "**個人の routine のモデル**とその**介入への有用性**まで踏み込む（L1–L4）。"
              "図・数値は `python -m hde.report` で自動生成。各図に**観察**と**解釈（だから何が言えるか）**を併記。\n")
+    L.append("## 元データの中身（何が入っているか）\n")
+    L.append(RAW_INTRO + "\n")
     L.append("## 何をしたか（層構造）\n")
     L.append("- **B（基盤）** `p(位置｜厨房)`：実厨房は多峰なので Flow が GMM に勝つ（Aの『ガウスに並ばれた』反省の実データでの克服）。")
     L.append("- **L1 個人 vs 集団**：“誰か”を知ると予測がどれだけ良くなるか＝習慣は個人的か。")
@@ -197,6 +219,8 @@ def _readme(m):
              "python -m hde.evaluate\npython -m hde.heatmap\npython -m hde.replay\n"
              "python -m hde.deep       # L1–L4（個人化 / ドリフト / few-shot / ポリシー）\n"
              "python -m hde.report     # 図 + 日本語README + index.html（観察＋解釈つき）\n```\n")
+    L.append("## 考察：どんなフォーマットのデータがあれば何ができるか\n")
+    L.append(FUTURE + "\n")
     L.append("_条件付きNFで forget/mistake を測るシリーズの B を、異常検知から**個人化された予測誤差の時間発展＋介入ポリシー**へ深化した版。_")
     C.BASE.joinpath("README.md").write_text("\n".join(L))
 
@@ -245,8 +269,10 @@ def _index_html(m):
 <b>L1</b> 習慣は個人的（“誰か”を知ると予測が改善）、<b>L2</b> 習慣は時間で動く/定着する、
 <b>L3</b> 公共の事前分布から少数例で新しい人を個人化できる、<b>L4</b> サプライズで事前警告する方が事後対応より得、
 を示す。各図に<b>観察</b>と<b>解釈（だから何が言えるか）</b>を併記。</p>
+<section><h2>元データの中身（何が入っているか）</h2><p class="lead">{RAW_INTRO}</p></section>
 {data_html}
 {blocks}
+<section><h2>考察：どんなフォーマットのデータがあれば何ができるか</h2>{FUTURE}</section>
 <p class="sub"><code>python -m hde.report</code> で自動生成。NF forget/mistakeシリーズBの深化版（L1–L4）。</p>
 </body></html>"""
     C.BASE.joinpath("index.html").write_text(html)
