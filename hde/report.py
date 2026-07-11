@@ -7,6 +7,7 @@ Run AFTER hde.heatmap, hde.replay, hde.deep so all figures + metrics exist.
 from __future__ import annotations
 
 import json
+import re
 
 import numpy as np
 import matplotlib
@@ -14,6 +15,30 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 from . import config as C
+
+
+def _md(s: str) -> str:
+    """Render inline markdown (**bold**, *italic*) as HTML so index.html isn't literal."""
+    s = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+    s = re.sub(r"\*(.+?)\*", r"<i>\1</i>", s)
+    return s
+
+
+# --- What data / how learned (shared by README + index) ---
+DATA_ROWS = [
+    ("データ", "<b>HD-EPIC</b> の公開注釈（実キッチンのエゴセントリック記録・9厨房・複数日）。"
+               "動画は使わず<b>注釈のみ</b>（物体の3D位置・object movements・視線）を使用。"),
+    ("使う量", "「実際に扱われた物」の <b>3D位置 (x,y,z)</b> を厨房ごとに集める（厨房 ≒ その人の台所）。"),
+    ("予測対象 x", "物が扱われた <b>3D位置 (x, y, z)</b>"),
+    ("条件 c", "<b>厨房（≒その人）</b>"),
+    ("モデル", "条件付き <b>Neural Spline Flow</b>（zuko）で <code>p(x,y,z｜厨房)</code>。比較ベース＝GMM。"),
+    ("スコア", "<b>SURPRISE = −log p</b>＝「その厨房で、その場所にその物があるのはどれだけ意外か」"),
+]
+NUM_GUIDE = [
+    ("NLL（held-out）", "実際の配置をどれだけ当てたか。<b>低いほど良い</b>（負でもOK）。差が大きいほど当てやすい。"),
+    ("AUROC", "異常と正常を見分ける力。<b>0.5＝勘・1.0＝完璧</b>。"),
+    ("nats（ゲイン）", "条件（誰か・時間）を足したときのNLL改善量。大きいほどその条件が効く。"),
+]
 
 
 def _base_figures(m):
@@ -150,6 +175,16 @@ def _readme(m):
             L.append(f"- L4 予測ポリシー効用 **{dp['l4']['best_predictive_utility']:+.2f}** vs リアクティブ 0"
                      f"（捕捉 {dp['l4']['catch_at_best']:.0%} / 誤警報 {dp['l4']['false_alarm_at_best']:.0%}）。\n")
 
+    L.append("## データ / 学習\n")
+    L.append("| 項目 | 内容 |")
+    L.append("|---|---|")
+    for k, v in DATA_ROWS:
+        L.append(f"| **{k}** | {v} |")
+    L.append("\n**数字の読み方**\n")
+    for k, v in NUM_GUIDE:
+        L.append(f"- **{k}**：{v}")
+    L.append("")
+
     L.append("## 図と解釈\n")
     for f, t, obs, so in build_figures(m):
         if (C.FIGS / f).exists():
@@ -180,8 +215,12 @@ def _index_html(m):
     kpi_html = "\n".join(f'<div class="kpi"><b>{v}</b>{lab}</div>' for v, lab in kpi)
     blocks = "\n".join(
         f'<section><h2>{t}</h2><img src="results/figures/{f}" alt="{f}">'
-        f'<p class="obs"><b>観察</b>：{obs}</p><p class="so">{so}</p></section>'
+        f'<p class="obs"><b>観察</b>：{_md(obs)}</p><p class="so">{_md(so)}</p></section>'
         for f, t, obs, so in build_figures(m) if (C.FIGS / f).exists())
+    drows = "".join(f"<tr><td>{k}</td><td>{v}</td></tr>" for k, v in DATA_ROWS)
+    guide = "".join(f"<li><b>{k}</b>：{v}</li>" for k, v in NUM_GUIDE)
+    data_html = (f'<section><h2>データ / 学習（このページの前提）</h2><table class="d">{drows}</table>'
+                 f'<p class="sub" style="margin:.7rem 0 .2rem"><b>数字の読み方</b></p><ul>{guide}</ul></section>')
     html = f"""<!doctype html>
 <html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -195,6 +234,9 @@ def _index_html(m):
  .obs{{color:#333;margin:.5rem 0 .2rem}}
  .so{{color:#444;background:#faf8f5;border-left:3px solid #d97757;padding:.6rem .9rem;border-radius:0 8px 8px 0}}
  code{{background:#f0eee9;padding:.1rem .3rem;border-radius:4px}} .lead{{background:#f7f5f2;border-radius:12px;padding:1rem 1.2rem}}
+ table.d{{border-collapse:collapse;width:100%}} table.d td{{border:1px solid #e5e5e5;padding:.4rem .6rem;vertical-align:top}}
+ table.d tr td:first-child{{white-space:nowrap;font-weight:600;background:#faf8f5;width:9rem}}
+ ul{{margin:.3rem 0}}
 </style></head><body>
 <h1>HD-EPIC-NF — 実厨房の配置NF ＋ 個人化 / ドリフト / few-shot / 介入ポリシー</h1>
 <p class="sub">実験B（<code>−log p(位置｜厨房)</code>）を、異常検知から<b>個人の routine とその介入有用性</b>まで深化（L1–L4）。</p>
@@ -203,6 +245,7 @@ def _index_html(m):
 <b>L1</b> 習慣は個人的（“誰か”を知ると予測が改善）、<b>L2</b> 習慣は時間で動く/定着する、
 <b>L3</b> 公共の事前分布から少数例で新しい人を個人化できる、<b>L4</b> サプライズで事前警告する方が事後対応より得、
 を示す。各図に<b>観察</b>と<b>解釈（だから何が言えるか）</b>を併記。</p>
+{data_html}
 {blocks}
 <p class="sub"><code>python -m hde.report</code> で自動生成。NF forget/mistakeシリーズBの深化版（L1–L4）。</p>
 </body></html>"""
