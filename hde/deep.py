@@ -175,6 +175,129 @@ def l3_fewshot(df, dev, shots=(20, 50, 100, 200, 400)):
             "scratch_nll": {str(k): round(v, 3) for k, v in scr.items()}}
 
 
+# ---------------------------------------------------------------- L3'  prior projection
+# Diagnosis of L3: few-shot *fine-tunes* the weights toward the target, so the
+# other-kitchen prior imports the WRONG thing (absolute coordinates / idiosyncratic
+# habits) and hurts. Prior projection keeps the prior FIXED and instead aligns each
+# new kitchen to it with a tiny similarity transform (translation + yaw + isotropic
+# scale) fit from k shots -- transferring the RELATIONAL structure, not the absolutes.
+#   p_hat(x) = P(T(x)) * |det dT/dx|,   T(x) = s * Rz(theta) @ x + t,   log|det| = 3*log s
+class _Sim(torch.nn.Module):
+    def __init__(self, comps, dev):
+        super().__init__()
+        self._dev = dev
+        self.t = torch.nn.Parameter(torch.zeros(3, device=dev))          # always fit
+        self.ls = torch.nn.Parameter(torch.zeros((), device=dev))        # log isotropic scale
+        self.th = torch.nn.Parameter(torch.zeros((), device=dev))        # yaw (about z)
+        self.ls.requires_grad_("s" in comps)
+        self.th.requires_grad_("r" in comps)
+
+    def forward(self, x):
+        c, s = torch.cos(self.th), torch.sin(self.th)
+        zero = torch.zeros((), device=self._dev); one = torch.ones((), device=self._dev)
+        R = torch.stack([torch.stack([c, -s, zero]),
+                         torch.stack([s,  c, zero]),
+                         torch.stack([zero, zero, one])])
+        return (x @ R.t()) * torch.exp(self.ls) + self.t
+
+    def logdet(self):
+        return 3.0 * self.ls
+
+
+def _fit_proj(prior, Xk, dev, comps=("t", "s", "r"), init_t=None, steps=500, lr=0.05):
+    for p in prior.parameters():
+        p.requires_grad_(False)
+    prior.eval()
+    sim = _Sim(set(comps), dev)
+    if init_t is not None:
+        sim.t.data = init_t.clone()
+    Xk = Xk.to(dev); z = torch.zeros(len(Xk), dtype=torch.long, device=dev)
+    opt = torch.optim.Adam([p for p in sim.parameters() if p.requires_grad], lr=lr)
+    for _ in range(steps):
+        loss = -(prior.log_prob(z, sim(Xk)) + sim.logdet()).mean()
+        opt.zero_grad(); loss.backward(); opt.step()
+    return sim
+
+
+@torch.no_grad()
+def _proj_nll(prior, sim, X, dev):
+    X = X.to(dev); z = torch.zeros(len(X), dtype=torch.long, device=dev)
+    return float(-(prior.log_prob(z, sim(X)) + sim.logdet()).mean())
+
+
+def l3_priorproj(df, dev, shots=(5, 10, 20, 50, 100, 200, 400)):
+    kitchens = sorted(df["kitchen"].unique())
+    meth = ["proj", "fewshot", "scratch"]
+    curve = {m: {k: [] for k in shots} for m in meth}
+    ablv = ["t", "ts", "tsr"]
+    abl = {a: {k: [] for k in shots} for a in ablv}
+    prior_flat, full_flat = [], []
+    for target in kitchens:
+        others = df[(df["kitchen"] != target) & (df["split"] == "train")]
+        oc = torch.tensor(others[C.COORDS].values, dtype=torch.float32)
+        pre_state, _ = _train(oc, dev, epochs=40)
+        prior = PlacementModel(1, head="flow").to(dev); prior.load_state_dict(pre_state); prior.eval()
+        o_mean = oc.mean(0)
+        tgt = df[df["kitchen"] == target].sample(frac=1.0, random_state=0)
+        n_test = min(500, len(tgt) // 3)
+        test = torch.tensor(tgt[C.COORDS].values[:n_test], dtype=torch.float32)
+        pool = tgt[C.COORDS].values[n_test:]
+        prior_flat.append(_nll_uncond(pre_state, test, dev))
+        full_state, _ = _train(torch.tensor(pool, dtype=torch.float32), dev, epochs=80)
+        full_flat.append(_nll_uncond(full_state, test, dev))
+        for k in shots:
+            if len(pool) < k:
+                continue
+            Xk = torch.tensor(pool[:k], dtype=torch.float32)
+            init_t = (o_mean - Xk.mean(0)).to(dev)
+            sim = _fit_proj(prior, Xk, dev, comps=("t", "s", "r"), init_t=init_t)
+            curve["proj"][k].append(_proj_nll(prior, sim, test, dev))
+            _, nf = _train(Xk, dev, epochs=80, lr=5e-4, init_state=pre_state, val_X=test)
+            curve["fewshot"][k].append(nf)
+            _, ns = _train(Xk, dev, epochs=120, lr=1e-3, val_X=test)
+            curve["scratch"][k].append(ns)
+            for a, comps in [("t", ("t",)), ("ts", ("t", "s")), ("tsr", ("t", "s", "r"))]:
+                s2 = _fit_proj(prior, Xk, dev, comps=comps, init_t=init_t)
+                abl[a][k].append(_proj_nll(prior, s2, test, dev))
+        print(f"  {target} done")
+    agg = lambda d: {k: float(np.mean(v)) for k, v in d.items() if v}
+    res = {m: agg(curve[m]) for m in meth}
+    res_abl = {a: agg(abl[a]) for a in ablv}
+    prior_nll = float(np.mean(prior_flat)); full_nll = float(np.mean(full_flat))
+    ks = sorted(res["proj"])
+
+    fig, ax = plt.subplots(figsize=(8, 4.6))
+    ax.plot(ks, [res["proj"][k] for k in ks], "-o", lw=2.4, color="#2a9d8f",
+            label="prior projection (fixed prior + align)")
+    ax.plot(ks, [res["fewshot"][k] for k in ks], "-o", color="#d97757",
+            label="few-shot fine-tune (the L3 failure)")
+    ax.plot(ks, [res["scratch"][k] for k in ks], "-o", color="#8b93a1",
+            label="from scratch (target only)")
+    ax.axhline(prior_nll, ls="--", lw=1, color="#b0455f", label=f"prior pass-through ({prior_nll:.2f})")
+    ax.axhline(full_nll, ls=":", lw=1.2, color="#333", label=f"full target data ceiling ({full_nll:.2f})")
+    ax.set_xscale("log"); ax.set_xlabel("# adaptation examples from the new kitchen")
+    ax.set_ylabel("held-out NLL (lower = better)")
+    ax.set_title("L3′ · prior projection vs few-shot vs scratch"); ax.legend(fontsize=8)
+    fig.tight_layout(); fig.savefig(C.FIGS / "l3_priorproj.png", dpi=110); plt.close(fig)
+
+    fig, ax = plt.subplots(figsize=(7.5, 4.2))
+    lab = {"t": "translation only", "ts": "+ isotropic scale", "tsr": "+ yaw rotation (full)"}
+    col = {"t": "#c7d0d9", "ts": "#7cb0a6", "tsr": "#2a9d8f"}
+    for a in ablv:
+        ax.plot(ks, [res_abl[a][k] for k in ks], "-o", color=col[a], label=lab[a])
+    ax.axhline(prior_nll, ls="--", lw=1, color="#b0455f", label="no alignment")
+    ax.set_xscale("log"); ax.set_xlabel("# adaptation examples"); ax.set_ylabel("held-out NLL")
+    ax.set_title("L3′ ablation · which part of the frame gap matters"); ax.legend(fontsize=8)
+    fig.tight_layout(); fig.savefig(C.FIGS / "l3_priorproj_ablation.png", dpi=110); plt.close(fig)
+
+    return {"proj_nll": {str(k): round(v, 3) for k, v in res["proj"].items()},
+            "fewshot_nll": {str(k): round(v, 3) for k, v in res["fewshot"].items()},
+            "scratch_nll": {str(k): round(v, 3) for k, v in res["scratch"].items()},
+            "prior_passthrough_nll": round(prior_nll, 3),
+            "full_data_nll": round(full_nll, 3),
+            "ablation": {a: {str(k): round(v, 3) for k, v in res_abl[a].items()} for a in ablv}}
+
+
 # ---------------------------------------------------------------- L4
 def l4_policy(df, vocab, dev, benefit=1.0, fa_cost=0.15):
     ck = torch.load(C.MODEL_PT, map_location=dev)
@@ -221,8 +344,18 @@ def l4_policy(df, vocab, dev, benefit=1.0, fa_cost=0.15):
 
 
 def main():
+    import sys
     dev = device(); print("device:", dev)
     df, vocab = _load()
+    prev = json.loads(C.METRICS_JSON.read_text()) if C.METRICS_JSON.exists() else {}
+    if len(sys.argv) > 1 and sys.argv[1] == "priorproj":
+        print("L3' prior-projection...")
+        dp = prev.get("deep", {})
+        dp["l3proj"] = l3_priorproj(df, dev)
+        prev["deep"] = dp
+        C.METRICS_JSON.write_text(json.dumps(prev, indent=1))
+        print("wrote l3proj:", json.dumps(dp["l3proj"], ensure_ascii=False))
+        return
     out = {}
     print("L1 personalization..."); out["l1"] = l1_personalization(df, vocab, dev); print("  ", out["l1"]["mean_gain_nats"])
     print("L2 drift...");           out["l2"] = l2_drift(df, dev); print("  ", out["l2"]["mean_drift_nats"])
